@@ -1,10 +1,11 @@
 from PySide6.QtWidgets import (
     QMainWindow,
     QDockWidget,
-    QFileDialog
+    QFileDialog,
+    QLabel,
 )
 from PySide6.QtCore import Qt, QProcess
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 
 from ui.editor import EditorTabs
 from ui.file_explorer import FileExplorer
@@ -24,6 +25,7 @@ class MainWindow(QMainWindow):
         self.commands = CommandRegistry()
         self.current_project_path = None
         self.lsp_manager = LSPManager()
+        self._current_editor = None
 
         self._setup_ui()
         self._create_menu()
@@ -39,6 +41,14 @@ class MainWindow(QMainWindow):
         self.editor_tabs = EditorTabs()
         self.setCentralWidget(self.editor_tabs)
         self.editor_tabs.new_tab()
+
+        # Status bar with cursor position
+        self.position_label = QLabel("Ln 1, Col 1")
+        self.statusBar().addPermanentWidget(self.position_label)
+
+        # Track active editor to update cursor position
+        self._hook_editor(self.editor_tabs.current_editor())
+        self.editor_tabs.currentChanged.connect(self._on_tab_changed)
 
         # File Explorer Dock
         self.file_explorer = FileExplorer()
@@ -99,6 +109,14 @@ class MainWindow(QMainWindow):
         run_action.triggered.connect(self.run_current_file)
         run_menu.addAction(run_action)
 
+        # ----- Edit Menu -----
+        edit_menu = menu.addMenu("Edit")
+
+        comment_action = QAction("Toggle Comment", self)
+        comment_action.setShortcut(QKeySequence("Ctrl+/"))
+        comment_action.triggered.connect(self._toggle_comment_current_editor)
+        edit_menu.addAction(comment_action)
+
     # ------------------------
     # PROCESS SETUP
     # ------------------------
@@ -144,8 +162,11 @@ class MainWindow(QMainWindow):
         editor = self.editor_tabs.current_editor()
         if editor:
             apply_syntax_highlighter(editor, file_path)
+            self._hook_editor(editor)
 
-        self.lsp_manager.start_for_file(file_path)
+        client = self.lsp_manager.start_for_file(file_path)
+        if client and editor:
+            self.lsp_manager.attach_editor(editor)
 
     # ------------------------
     # RUN LOGIC
@@ -176,3 +197,41 @@ class MainWindow(QMainWindow):
 
     def _process_finished(self):
         self.terminal.write("\n[Process finished]\n")
+
+    def _toggle_comment_current_editor(self):
+        editor = self.editor_tabs.current_editor()
+        if editor:
+            editor.toggle_comment()
+
+    def _on_tab_changed(self, index):
+        editor = self.editor_tabs.current_editor()
+        if editor:
+            self._hook_editor(editor)
+
+    def _hook_editor(self, editor):
+        if editor is self._current_editor:
+            return
+
+        if self._current_editor is not None:
+            try:
+                self._current_editor.cursorPositionChanged.disconnect(
+                    self._update_cursor_position
+                )
+            except TypeError:
+                pass
+
+        self._current_editor = editor
+
+        if editor is not None:
+            editor.cursorPositionChanged.connect(self._update_cursor_position)
+            self._update_cursor_position()
+
+    def _update_cursor_position(self):
+        if not self._current_editor:
+            self.position_label.setText("")
+            return
+
+        cursor = self._current_editor.textCursor()
+        line = cursor.blockNumber() + 1
+        col = cursor.positionInBlock() + 1
+        self.position_label.setText(f"Ln {line}, Col {col}")
