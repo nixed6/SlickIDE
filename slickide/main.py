@@ -12,6 +12,7 @@ QMainWindow {
 QPlainTextEdit {
     background-color: #252526;
     color: #d4d4d4;
+    border: none;
 }
 QTreeView {
     background-color: #1e1e1e;
